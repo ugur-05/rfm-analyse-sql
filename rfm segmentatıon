@@ -1,0 +1,127 @@
+-- Projekt: RFM-Analyse für Kunden im Einzelhandel
+-- Beschreibung: Diese SQL-Skripte berechnen verschiedene RFM-Metriken 
+--               (Recency, Frequency, Monetary, Tenure, Basket Size)
+--               auf Basis von Kundenkäufen bis zum 1. Januar 2012.
+-- Autor: Ugur Ozturk
+-- Datum: 30. Juni 2025
+
+-- Schritt 1: Erstellung der Tabelle für RFM-Ergebnisse
+CREATE TABLE RFM_uur (
+    CustomerId VARCHAR(20), 
+    LastInvoiceDate DATETIME,
+    FirstInvoiceDate DATETIME,
+    Recency INT,
+    Frequency INT,
+    Monetary INT,
+    Tenure INT,
+    BasketSize FLOAT,
+    RecencyScale INT,
+    FrquencyScale INT,
+    Segment VARCHAR(50)
+);
+
+-- Vorschau auf die RFM-Tabelle
+SELECT * FROM RFM_uur;
+
+-- Schritt 2: Einfügen eindeutiger Kunden-IDs
+INSERT INTO RFM_uur (CustomerId)
+SELECT DISTINCT Customer_ID FROM retail_II;
+
+-- Schritt 3: Letztes Kaufdatum pro Kunde
+UPDATE RFM_uur
+SET LastInvoiceDate = (
+    SELECT MAX(InvoiceDate)
+    FROM retail_II r 
+    WHERE r.Customer_ID = RFM_uur.CustomerId
+);
+
+-- Schritt 4: Recency berechnen (Tage seit letztem Kauf bis 01.01.2012)
+UPDATE RFM_uur
+SET Recency = DATEDIFF(DAY, LastInvoiceDate, '20120101');
+
+-- Schritt 5: Erstes Kaufdatum pro Kunde
+UPDATE RFM_uur
+SET FirstInvoiceDate = (
+    SELECT MIN(InvoiceDate)
+    FROM retail_II r
+    WHERE r.Customer_ID = RFM_uur.CustomerId
+);
+
+-- Schritt 6: Tenure berechnen (Kundenbeziehungslänge in Tagen)
+UPDATE RFM_uur
+SET Tenure = DATEDIFF(DAY, FirstInvoiceDate, '20120101');
+
+-- Schritt 7: Kaufhäufigkeit (Frequency)
+UPDATE RFM_uur
+SET Frequency = (
+    SELECT COUNT(DISTINCT Invoice)
+    FROM retail_II r 
+    WHERE r.Customer_ID = RFM_uur.CustomerId
+);
+
+-- Schritt 8: Umsatz (Monetary)
+UPDATE RFM_uur
+SET Monetary = (
+    SELECT SUM(Quantity * Price)
+    FROM retail_II r 
+    WHERE r.Customer_ID = RFM_uur.CustomerId
+);
+
+-- Schritt 9: Durchschnittliche Warenkorbgröße (Basket Size)
+UPDATE RFM_uur
+SET BasketSize = CAST(Monetary AS FLOAT) / NULLIF(Frequency, 0);
+
+-- Schritt 10: Frequenz-Skala (NTILE 5)
+UPDATE RFM_uur
+SET FrquencyScale = (
+    SELECT rank_
+    FROM (
+        SELECT CustomerId, Frequency,
+               NTILE(5) OVER (ORDER BY Frequency) AS rank_
+        FROM RFM_uur
+    ) t 
+    WHERE t.CustomerId = RFM_uur.CustomerId
+);
+
+-- Schritt 11: Recency-Skala (NTILE 5, absteigend)
+UPDATE RFM_uur
+SET RecencyScale = (
+    SELECT rank_
+    FROM (
+        SELECT CustomerId, Recency,
+               NTILE(5) OVER (ORDER BY Recency DESC) AS rank_
+        FROM RFM_uur
+    ) t 
+    WHERE t.CustomerId = RFM_uur.CustomerId
+);
+
+-- Schritt 12: Kunden-Segmentierung basierend auf Recency und Frequency Skalen
+UPDATE RFM_uur SET Segment = 'Hibernating'
+WHERE RecencyScale IN (1, 2) AND FrquencyScale IN (1, 2);
+
+UPDATE RFM_uur SET Segment = 'At Risk'
+WHERE RecencyScale IN (1, 2) AND FrquencyScale IN (3, 4);
+
+UPDATE RFM_uur SET Segment = 'Can’t Lose Them'
+WHERE RecencyScale IN (1, 2) AND FrquencyScale = 5;
+
+UPDATE RFM_uur SET Segment = 'About To Sleep'
+WHERE RecencyScale = 3 AND FrquencyScale IN (1, 2);
+
+UPDATE RFM_uur SET Segment = 'Need Attention'
+WHERE RecencyScale = 3 AND FrquencyScale = 3;
+
+UPDATE RFM_uur SET Segment = 'Loyal Customer'
+WHERE RecencyScale IN (3, 4) AND FrquencyScale IN (4, 5);
+
+UPDATE RFM_uur SET Segment = 'Promising'
+WHERE RecencyScale = 4 AND FrquencyScale = 1;
+
+UPDATE RFM_uur SET Segment = 'New Customer'
+WHERE RecencyScale = 5 AND FrquencyScale = 1;
+
+UPDATE RFM_uur SET Segment = 'Potential Loyalist'
+WHERE RecencyScale IN (4, 5) AND FrquencyScale IN (2, 3);
+
+UPDATE RFM_uur SET Segment = 'Champions'
+WHERE RecencyScale = 5 AND FrquencyScale IN (4, 5);
