@@ -1,0 +1,111 @@
+-- Step 1: Create table for RFM results
+CREATE TABLE RFM_uur (
+    CustomerID VARCHAR(20),
+    LastInvoiceDate DATETIME,
+    FirstInvoiceDate DATETIME,
+    Recency INT,
+    Frequency INT,
+    Monetary INT,
+    Tenure INT,
+    BasketSize FLOAT,
+    RecencyScale INT,
+    FrequencyScale INT,
+    Segment VARCHAR(50)
+);
+
+-- Preview the RFM table
+SELECT * FROM RFM_uur;
+
+-- Step 2: Insert unique customer IDs
+INSERT INTO RFM_uur (CustomerID)
+SELECT DISTINCT CustomerID FROM Retail_II;
+
+-- Step 3: Last purchase date per customer
+UPDATE RFM_uur
+SET LastInvoiceDate = (
+    SELECT MAX(InvoiceDate)
+    FROM Retail_II r
+    WHERE r.CustomerID = RFM_uur.CustomerID
+);
+
+-- Step 4: Calculate Recency (days since last purchase until 01.01.2012)
+UPDATE RFM_uur
+SET Recency = DATEDIFF(DAY, LastInvoiceDate, '20120101');
+
+-- Step 5: First purchase date per customer
+UPDATE RFM_uur
+SET FirstInvoiceDate = (
+    SELECT MIN(InvoiceDate)
+    FROM Retail_II r
+    WHERE r.CustomerID = RFM_uur.CustomerID
+);
+
+-- Step 6: Calculate Tenure (customer relationship length in days)
+UPDATE RFM_uur
+SET Tenure = DATEDIFF(DAY, FirstInvoiceDate, '20120101');
+
+-- Step 7: Purchase frequency
+UPDATE RFM_uur
+SET Frequency = (
+    SELECT COUNT(DISTINCT Invoice)
+    FROM Retail_II r
+    WHERE r.CustomerID = RFM_uur.CustomerID
+);
+
+-- Step 8: Revenue (Monetary value)
+UPDATE RFM_uur
+SET Monetary = (
+    SELECT SUM(Quantity * Price)
+    FROM Retail_II r
+    WHERE r.CustomerID = RFM_uur.CustomerID
+);
+
+-- Step 9: Average basket size
+UPDATE RFM_uur
+SET BasketSize = CAST(Monetary AS FLOAT) / NULLIF(Frequency, 0);
+
+-- Step 10: Frequency scale (NTILE 5)
+UPDATE RFM_uur
+SET FrequencyScale = (
+    SELECT rank_
+    FROM (
+        SELECT CustomerID, Frequency,
+               NTILE(5) OVER (ORDER BY Frequency) AS rank_
+        FROM RFM_uur
+    ) t
+    WHERE t.CustomerID = RFM_uur.CustomerID
+);
+
+-- Step 11: Recency scale (NTILE 5 descending)
+UPDATE RFM_uur
+SET RecencyScale = (
+    SELECT rank_
+    FROM (
+        SELECT CustomerID, Recency,
+               NTILE(5) OVER (ORDER BY Recency DESC) AS rank_
+        FROM RFM_uur
+    ) t
+    WHERE t.CustomerID = RFM_uur.CustomerID
+); 
+
+-- Step 12: Customer segmentation based on Recency and Frequency Scales
+UPDATE RFM_uur SET Segment = 'Hibernating'
+WHERE RecencyScale IN (1, 2) AND FrequencyScale IN (1, 2);
+
+UPDATE RFM_uur SET Segment = 'At Risk'
+WHERE RecencyScale IN (1, 2) AND FrequencyScale IN (3, 4);
+
+UPDATE RFM_uur SET Segment = 'Can’t Lose Them'
+WHERE RecencyScale IN (1, 2) AND FrequencyScale = 5;
+
+UPDATE RFM_uur SET Segment = 'About to Sleep'
+WHERE RecencyScale = 3 AND FrequencyScale IN (1, 2);
+
+UPDATE RFM_uur SET Segment = 'Need Attention'
+WHERE RecencyScale = 3 AND FrequencyScale = 3;
+
+UPDATE RFM_uur SET Segment = 'Loyal Customer'
+WHERE RecencyScale IN (3, 4) AND FrequencyScale IN (4, 5);
+
+UPDATE RFM_uur SET Segment = 'Promising'
+WHERE RecencyScale = 4 AND FrequencyScale = 1;
